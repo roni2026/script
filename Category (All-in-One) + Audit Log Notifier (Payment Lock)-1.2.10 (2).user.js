@@ -3430,15 +3430,48 @@ function autoClickContinueForDeactivatedAd() {
                 containsKeyword(title, ["case", "cases", "cover", "covers", "phone cover", "mobile cover", "phone case", "মোবাইল কভার", "ফোন কেস"])
             );
 
-            const shouldPinCurrentAccessoryCategory = shouldPinLaptopAccessoryCategory || shouldPinCaseAccessoryCategory;
+            const shouldPinGeneratorCategory = (
+                (categorySelect.value === "899" || categorySelect.value === "1006") &&
+                containsKeyword(title, ["generator", "জেনারেটর"])
+            );
 
-            if (shouldPinCurrentAccessoryCategory && currentCategoryEntry) {
+            const shouldPinDesktopLaptopCategory = (
+                (categorySelect.value === "893" || categorySelect.value === "896") &&
+                containsKeyword(title, ["motherboard", "মাদারবোর্ড", "display", "ডিসপ্লে", "charger", "chargers", "চার্জার"]) &&
+                selectedCategory && selectedCategory.categoryValue === "231"
+            );
+
+            const shouldPinCurrentCategory = shouldPinLaptopAccessoryCategory || shouldPinCaseAccessoryCategory || shouldPinGeneratorCategory || shouldPinDesktopLaptopCategory;
+
+            if (shouldPinCurrentCategory && currentCategoryEntry) {
                 if (shouldPinLaptopAccessoryCategory) {
                     console.log('[Auto-Select] Keeping category 897 (Laptop/Computer Accessories) for charger/motherboard-related title.');
-                } else {
+                } else if (shouldPinCaseAccessoryCategory) {
                     console.log(`[Auto-Select] Keeping current accessory category ${categorySelect.value} for case/cover-related title overlap.`);
+                } else if (shouldPinGeneratorCategory) {
+                    console.log(`[Auto-Select] Keeping current generator category ${categorySelect.value} to avoid AC/Home Electronics ↔ Industry Tools interchange.`);
+                } else {
+                    console.log(`[Auto-Select] Keeping current category ${categorySelect.value} (Desktop/Laptop) to avoid misrouting motherboard/display/charger titles to Mobile Accessories (231).`);
                 }
                 selectedCategory = currentCategoryEntry;
+            }
+
+            const titleContainsStrongLaptopKeyword = containsKeyword(title, [
+                "laptop", "notebook", "macbook", "inspiron", "pavilion", "think pad", "thinkpad", "elitebook", "elite book", "hp", "dell", "zenbook", "microsoft", "surface",
+                "ল্যাপটপ", "নোটবুক", "ম্যাকবুক", "ইনস্পাইরন", "প্যাভিলিয়ন", "থিংকপ্যাড", "জেনবুক", "সার্ফেস ল্যাপটপ"
+            ]);
+            const titleContainsDisplayKeyword = containsKeyword(title, ["display", "ডিসপ্লে"]);
+            const laptopCategoryEntry = CATEGORY_AND_ITEM_TYPE_MAP.find(entry => entry.categoryValue === "896");
+            if (
+                !shouldPinCurrentCategory &&
+                selectedCategory &&
+                (selectedCategory.categoryValue === "231" || selectedCategory.categoryValue === "897") &&
+                titleContainsStrongLaptopKeyword &&
+                titleContainsDisplayKeyword &&
+                laptopCategoryEntry
+            ) {
+                console.log('[Auto-Select] Laptop + display context detected. Preventing accessory category (231/897) and selecting Laptop (896).');
+                selectedCategory = laptopCategoryEntry;
             }
 
             const categoryEntryToProcess = selectedCategory || currentCategoryEntry;
@@ -3465,14 +3498,9 @@ function autoClickContinueForDeactivatedAd() {
                 //     continue;
                 // }
 
-                const titleContainsStrongLaptopKeyword = containsKeyword(title, [
-                    "laptop", "notebook", "macbook", "inspiron", "pavilion", "think pad", "thinkpad", "elitebook", "elite book", "hp", "dell", "zenbook", "microsoft", "surface", // English
-                    "ল্যাপটপ", "নোটবুক", "ম্যাকবুক", "ইনস্পাইরন", "প্যাভিলিয়ন", "থিংকপ্যাড", "জেনবুক", "সার্ফেস ল্যাপটপ" // Bangla
-                ]);
-
                 const isLaptopAccessoryCategory = (categoryEntry.categoryValue === "897");
 
-                if (titleContainsStrongLaptopKeyword && isLaptopAccessoryCategory && !shouldPinCurrentAccessoryCategory) {
+                if (titleContainsStrongLaptopKeyword && isLaptopAccessoryCategory && !shouldPinCurrentCategory) {
                     console.log(`[Auto-Select] Conflict detected: Title contains strong "laptop" keywords but matched "${categoryEntry.name}". Skipping this accessory match to prioritize Laptop.`);
                     continue;
                 }
