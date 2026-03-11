@@ -3167,6 +3167,63 @@ function autoClickContinueForDeactivatedAd() {
         });
     }
 
+
+    function getMatchedKeywords(title, keywords = [], excludedKeywords = []) {
+        const lowerTitle = title.toLowerCase();
+
+        if (excludedKeywords.some(keyword => lowerTitle.includes(String(keyword).toLowerCase()))) {
+            return [];
+        }
+
+        return (keywords || []).filter(keyword => {
+            const text = String(keyword);
+            if (text.startsWith('\\b') && text.endsWith('\\b')) {
+                try {
+                    return new RegExp(text, 'i').test(lowerTitle);
+                } catch (_) {
+                    return false;
+                }
+            }
+            return lowerTitle.includes(text.toLowerCase());
+        });
+    }
+
+    function selectBestCategoryMatch(title, matchingCategories) {
+        if (!matchingCategories || matchingCategories.length <= 1) return matchingCategories[0] || null;
+
+        const scored = matchingCategories.map(entry => {
+            const matchedKeywords = getMatchedKeywords(title, entry.keywords, entry.excludedKeywords);
+            const maxKeywordLength = matchedKeywords.length
+                ? Math.max(...matchedKeywords.map(k => String(k).replace(/\\b/g, '').length))
+                : 0;
+            const regexKeywordCount = matchedKeywords.filter(k => String(k).startsWith('\\b') && String(k).endsWith('\\b')).length;
+            const multiWordCount = matchedKeywords.filter(k => String(k).trim().includes(' ')).length;
+            return { entry, matchedKeywords, maxKeywordLength, regexKeywordCount, multiWordCount };
+        });
+
+        scored.sort((a, b) =>
+            b.maxKeywordLength - a.maxKeywordLength ||
+            b.multiWordCount - a.multiWordCount ||
+            b.regexKeywordCount - a.regexKeywordCount ||
+            b.matchedKeywords.length - a.matchedKeywords.length
+        );
+
+        const best = scored[0];
+        const tie = scored[1] &&
+            scored[1].maxKeywordLength === best.maxKeywordLength &&
+            scored[1].multiWordCount === best.multiWordCount &&
+            scored[1].regexKeywordCount === best.regexKeywordCount &&
+            scored[1].matchedKeywords.length === best.matchedKeywords.length;
+
+        if (tie) {
+            console.warn(`[Auto-Select] Multiple category matches detected (${matchingCategories.length}) with equal strength. Keeping original category.`);
+            return null;
+        }
+
+        console.warn(`[Auto-Select] Multiple category matches detected (${matchingCategories.length}). Selected best match ${best.entry.categoryValue} using specific keyword scoring.`);
+        return best.entry;
+    }
+
     // Generic function to observe a select dropdown and select the appropriate value when it appears
     // It will also try to set the value immediately if the element and options are already available.
     function observeAndSetSelectValue(elementId, targetValue, observerRefName) {
@@ -3346,13 +3403,86 @@ function autoClickContinueForDeactivatedAd() {
             const matchingCategories = CATEGORY_AND_ITEM_TYPE_MAP.filter((categoryEntry) =>
                 containsKeyword(title, categoryEntry.keywords, categoryEntry.excludedKeywords)
             );
+            const initiallySelectedCategory = selectBestCategoryMatch(title, matchingCategories);
+            const currentCategoryEntry = CATEGORY_AND_ITEM_TYPE_MAP.find(entry => entry.categoryValue === categorySelect.value) || null;
 
-            if (matchingCategories.length > 1) {
-                console.warn(`[Auto-Select] Multiple category matches detected (${matchingCategories.length}). Keeping original category.`);
+            let selectedCategory = initiallySelectedCategory;
+            const childrenFurnitureEntry = CATEGORY_AND_ITEM_TYPE_MAP.find(entry => entry.categoryValue === "251");
+            const titleLooksLikeChildrenFurniture = !!childrenFurnitureEntry && (
+                containsKeyword(title, childrenFurnitureEntry.keywords, childrenFurnitureEntry.excludedKeywords) ||
+                (childrenFurnitureEntry.itemTypes || []).some(itemType =>
+                    containsKeyword(title, itemType.keywords, itemType.excludedKeywords)
+                )
+            );
+
+            if (selectedCategory && selectedCategory.categoryValue === "247" && titleLooksLikeChildrenFurniture && childrenFurnitureEntry) {
+                console.log('[Auto-Select] Living Room match replaced with Children\'s Furniture (251) due overlap keyword context.');
+                selectedCategory = childrenFurnitureEntry;
+            }
+
+            const shouldPinLaptopAccessoryCategory = (
+                categorySelect.value === "897" &&
+                containsKeyword(title, ["charger", "chargers", "চার্জার", "adopter", "adapter", "motherboard", "মাদারবোর্ড", "main board", "মেইন বোর্ড"])
+            );
+
+            const shouldPinCaseAccessoryCategory = (
+                (categorySelect.value === "231" || categorySelect.value === "897") &&
+                containsKeyword(title, ["case", "cases", "cover", "covers", "phone cover", "mobile cover", "phone case", "মোবাইল কভার", "ফোন কেস"])
+            );
+
+            const shouldPinGeneratorCategory = (
+                (categorySelect.value === "899" || categorySelect.value === "1006") &&
+                containsKeyword(title, ["generator", "জেনারেটর"])
+            );
+
+            const shouldPinDesktopLaptopCategory = (
+                (categorySelect.value === "893" || categorySelect.value === "896") &&
+                containsKeyword(title, ["motherboard", "মাদারবোর্ড", "display", "ডিসপ্লে", "charger", "chargers", "চার্জার"]) &&
+                selectedCategory && selectedCategory.categoryValue === "231"
+            );
+
+            const shouldPinCurrentCategory = shouldPinLaptopAccessoryCategory || shouldPinCaseAccessoryCategory || shouldPinGeneratorCategory || shouldPinDesktopLaptopCategory;
+
+            if (shouldPinCurrentCategory && currentCategoryEntry) {
+                if (shouldPinLaptopAccessoryCategory) {
+                    console.log('[Auto-Select] Keeping category 897 (Laptop/Computer Accessories) for charger/motherboard-related title.');
+                } else if (shouldPinCaseAccessoryCategory) {
+                    console.log(`[Auto-Select] Keeping current accessory category ${categorySelect.value} for case/cover-related title overlap.`);
+                } else if (shouldPinGeneratorCategory) {
+                    console.log(`[Auto-Select] Keeping current generator category ${categorySelect.value} to avoid AC/Home Electronics ↔ Industry Tools interchange.`);
+                } else {
+                    console.log(`[Auto-Select] Keeping current category ${categorySelect.value} (Desktop/Laptop) to avoid misrouting motherboard/display/charger titles to Mobile Accessories (231).`);
+                }
+                selectedCategory = currentCategoryEntry;
+            }
+
+            const titleContainsStrongLaptopKeyword = containsKeyword(title, [
+                "laptop", "notebook", "macbook", "inspiron", "pavilion", "think pad", "thinkpad", "elitebook", "elite book", "hp", "dell", "zenbook", "microsoft", "surface",
+                "ল্যাপটপ", "নোটবুক", "ম্যাকবুক", "ইনস্পাইরন", "প্যাভিলিয়ন", "থিংকপ্যাড", "জেনবুক", "সার্ফেস ল্যাপটপ"
+            ]);
+            const titleContainsDisplayKeyword = containsKeyword(title, ["display", "ডিসপ্লে"]);
+            const laptopCategoryEntry = CATEGORY_AND_ITEM_TYPE_MAP.find(entry => entry.categoryValue === "896");
+            if (
+                !shouldPinCurrentCategory &&
+                selectedCategory &&
+                (selectedCategory.categoryValue === "231" || selectedCategory.categoryValue === "897") &&
+                titleContainsStrongLaptopKeyword &&
+                titleContainsDisplayKeyword &&
+                laptopCategoryEntry
+            ) {
+                console.log('[Auto-Select] Laptop + display context detected. Preventing accessory category (231/897) and selecting Laptop (896).');
+                selectedCategory = laptopCategoryEntry;
+            }
+
+            const categoryEntryToProcess = selectedCategory || currentCategoryEntry;
+            if (!categoryEntryToProcess) {
+                console.log('[Auto-Select] No category candidate available for processing.');
                 return;
             }
+
             for (const categoryEntry of CATEGORY_AND_ITEM_TYPE_MAP) {
-            if (containsKeyword(title, categoryEntry.keywords, categoryEntry.excludedKeywords)) {
+            if (categoryEntry.categoryValue === categoryEntryToProcess.categoryValue) {
+
                 const currentUrl = window.location.href;
                 // These pages were previously excluded, removing that specific logic as the new membership check is more targeted.
                 // const verificationPage = "https://admin.bikroy.com/review/item/verification";
@@ -3368,14 +3498,9 @@ function autoClickContinueForDeactivatedAd() {
                 //     continue;
                 // }
 
-                const titleContainsStrongLaptopKeyword = containsKeyword(title, [
-                    "laptop", "notebook", "macbook", "inspiron", "pavilion", "think pad", "thinkpad", "elitebook", "elite book", "hp", "dell", "zenbook", "microsoft", "surface", // English
-                    "ল্যাপটপ", "নোটবুক", "ম্যাকবুক", "ইনস্পাইরন", "প্যাভিলিয়ন", "থিংকপ্যাড", "জেনবুক", "সার্ফেস ল্যাপটপ" // Bangla
-                ]);
-
                 const isLaptopAccessoryCategory = (categoryEntry.categoryValue === "897");
 
-                if (titleContainsStrongLaptopKeyword && isLaptopAccessoryCategory) {
+                if (titleContainsStrongLaptopKeyword && isLaptopAccessoryCategory && !shouldPinCurrentCategory) {
                     console.log(`[Auto-Select] Conflict detected: Title contains strong "laptop" keywords but matched "${categoryEntry.name}". Skipping this accessory match to prioritize Laptop.`);
                     continue;
                 }
