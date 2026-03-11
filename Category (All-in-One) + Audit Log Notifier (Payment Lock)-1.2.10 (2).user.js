@@ -3167,6 +3167,63 @@ function autoClickContinueForDeactivatedAd() {
         });
     }
 
+
+    function getMatchedKeywords(title, keywords = [], excludedKeywords = []) {
+        const lowerTitle = title.toLowerCase();
+
+        if (excludedKeywords.some(keyword => lowerTitle.includes(String(keyword).toLowerCase()))) {
+            return [];
+        }
+
+        return (keywords || []).filter(keyword => {
+            const text = String(keyword);
+            if (text.startsWith('\\b') && text.endsWith('\\b')) {
+                try {
+                    return new RegExp(text, 'i').test(lowerTitle);
+                } catch (_) {
+                    return false;
+                }
+            }
+            return lowerTitle.includes(text.toLowerCase());
+        });
+    }
+
+    function selectBestCategoryMatch(title, matchingCategories) {
+        if (!matchingCategories || matchingCategories.length <= 1) return matchingCategories[0] || null;
+
+        const scored = matchingCategories.map(entry => {
+            const matchedKeywords = getMatchedKeywords(title, entry.keywords, entry.excludedKeywords);
+            const maxKeywordLength = matchedKeywords.length
+                ? Math.max(...matchedKeywords.map(k => String(k).replace(/\\b/g, '').length))
+                : 0;
+            const regexKeywordCount = matchedKeywords.filter(k => String(k).startsWith('\\b') && String(k).endsWith('\\b')).length;
+            const multiWordCount = matchedKeywords.filter(k => String(k).trim().includes(' ')).length;
+            return { entry, matchedKeywords, maxKeywordLength, regexKeywordCount, multiWordCount };
+        });
+
+        scored.sort((a, b) =>
+            b.maxKeywordLength - a.maxKeywordLength ||
+            b.multiWordCount - a.multiWordCount ||
+            b.regexKeywordCount - a.regexKeywordCount ||
+            b.matchedKeywords.length - a.matchedKeywords.length
+        );
+
+        const best = scored[0];
+        const tie = scored[1] &&
+            scored[1].maxKeywordLength === best.maxKeywordLength &&
+            scored[1].multiWordCount === best.multiWordCount &&
+            scored[1].regexKeywordCount === best.regexKeywordCount &&
+            scored[1].matchedKeywords.length === best.matchedKeywords.length;
+
+        if (tie) {
+            console.warn(`[Auto-Select] Multiple category matches detected (${matchingCategories.length}) with equal strength. Keeping original category.`);
+            return null;
+        }
+
+        console.warn(`[Auto-Select] Multiple category matches detected (${matchingCategories.length}). Selected best match ${best.entry.categoryValue} using specific keyword scoring.`);
+        return best.entry;
+    }
+
     // Generic function to observe a select dropdown and select the appropriate value when it appears
     // It will also try to set the value immediately if the element and options are already available.
     function observeAndSetSelectValue(elementId, targetValue, observerRefName) {
@@ -3346,13 +3403,26 @@ function autoClickContinueForDeactivatedAd() {
             const matchingCategories = CATEGORY_AND_ITEM_TYPE_MAP.filter((categoryEntry) =>
                 containsKeyword(title, categoryEntry.keywords, categoryEntry.excludedKeywords)
             );
+            const selectedCategory = selectBestCategoryMatch(title, matchingCategories);
 
-            if (matchingCategories.length > 1) {
-                console.warn(`[Auto-Select] Multiple category matches detected (${matchingCategories.length}). Keeping original category.`);
-                return;
-            }
             for (const categoryEntry of CATEGORY_AND_ITEM_TYPE_MAP) {
-            if (containsKeyword(title, categoryEntry.keywords, categoryEntry.excludedKeywords)) {
+            if (selectedCategory && categoryEntry.categoryValue === selectedCategory.categoryValue) {
+                const isLivingRoomFurnitureCategory = (categoryEntry.categoryValue === "247");
+                const childrenFurnitureEntry = CATEGORY_AND_ITEM_TYPE_MAP.find(entry => entry.categoryValue === "251");
+                const titleLooksLikeChildrenFurniture = !!childrenFurnitureEntry && (
+                    containsKeyword(title, childrenFurnitureEntry.keywords, childrenFurnitureEntry.excludedKeywords) ||
+                    (childrenFurnitureEntry.itemTypes || []).some(itemType =>
+                        containsKeyword(title, itemType.keywords, itemType.excludedKeywords)
+                    )
+                );
+
+                // Special overlap rule: if the title also looks like Children's Furniture,
+                // do not let Living Room furniture steal it due shared words like "দোলনা"/"swing".
+                if (isLivingRoomFurnitureCategory && titleLooksLikeChildrenFurniture) {
+                    console.log('[Auto-Select] Living Room match skipped because title also matches Children\'s Furniture (251).');
+                    continue;
+                }
+
                 const currentUrl = window.location.href;
                 // These pages were previously excluded, removing that specific logic as the new membership check is more targeted.
                 // const verificationPage = "https://admin.bikroy.com/review/item/verification";
