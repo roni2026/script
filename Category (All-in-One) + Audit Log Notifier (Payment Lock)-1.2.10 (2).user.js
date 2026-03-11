@@ -3403,25 +3403,52 @@ function autoClickContinueForDeactivatedAd() {
             const matchingCategories = CATEGORY_AND_ITEM_TYPE_MAP.filter((categoryEntry) =>
                 containsKeyword(title, categoryEntry.keywords, categoryEntry.excludedKeywords)
             );
-            const selectedCategory = selectBestCategoryMatch(title, matchingCategories);
+            const initiallySelectedCategory = selectBestCategoryMatch(title, matchingCategories);
+            const currentCategoryEntry = CATEGORY_AND_ITEM_TYPE_MAP.find(entry => entry.categoryValue === categorySelect.value) || null;
+
+            let selectedCategory = initiallySelectedCategory;
+            const childrenFurnitureEntry = CATEGORY_AND_ITEM_TYPE_MAP.find(entry => entry.categoryValue === "251");
+            const titleLooksLikeChildrenFurniture = !!childrenFurnitureEntry && (
+                containsKeyword(title, childrenFurnitureEntry.keywords, childrenFurnitureEntry.excludedKeywords) ||
+                (childrenFurnitureEntry.itemTypes || []).some(itemType =>
+                    containsKeyword(title, itemType.keywords, itemType.excludedKeywords)
+                )
+            );
+
+            if (selectedCategory && selectedCategory.categoryValue === "247" && titleLooksLikeChildrenFurniture && childrenFurnitureEntry) {
+                console.log('[Auto-Select] Living Room match replaced with Children\'s Furniture (251) due overlap keyword context.');
+                selectedCategory = childrenFurnitureEntry;
+            }
+
+            const shouldPinLaptopAccessoryCategory = (
+                categorySelect.value === "897" &&
+                containsKeyword(title, ["charger", "chargers", "চার্জার", "adopter", "adapter", "motherboard", "মাদারবোর্ড", "main board", "মেইন বোর্ড"])
+            );
+
+            const shouldPinCaseAccessoryCategory = (
+                (categorySelect.value === "231" || categorySelect.value === "897") &&
+                containsKeyword(title, ["case", "cases", "cover", "covers", "phone cover", "mobile cover", "phone case", "মোবাইল কভার", "ফোন কেস"])
+            );
+
+            const shouldPinCurrentAccessoryCategory = shouldPinLaptopAccessoryCategory || shouldPinCaseAccessoryCategory;
+
+            if (shouldPinCurrentAccessoryCategory && currentCategoryEntry) {
+                if (shouldPinLaptopAccessoryCategory) {
+                    console.log('[Auto-Select] Keeping category 897 (Laptop/Computer Accessories) for charger/motherboard-related title.');
+                } else {
+                    console.log(`[Auto-Select] Keeping current accessory category ${categorySelect.value} for case/cover-related title overlap.`);
+                }
+                selectedCategory = currentCategoryEntry;
+            }
+
+            const categoryEntryToProcess = selectedCategory || currentCategoryEntry;
+            if (!categoryEntryToProcess) {
+                console.log('[Auto-Select] No category candidate available for processing.');
+                return;
+            }
 
             for (const categoryEntry of CATEGORY_AND_ITEM_TYPE_MAP) {
-            if (selectedCategory && categoryEntry.categoryValue === selectedCategory.categoryValue) {
-                const isLivingRoomFurnitureCategory = (categoryEntry.categoryValue === "247");
-                const childrenFurnitureEntry = CATEGORY_AND_ITEM_TYPE_MAP.find(entry => entry.categoryValue === "251");
-                const titleLooksLikeChildrenFurniture = !!childrenFurnitureEntry && (
-                    containsKeyword(title, childrenFurnitureEntry.keywords, childrenFurnitureEntry.excludedKeywords) ||
-                    (childrenFurnitureEntry.itemTypes || []).some(itemType =>
-                        containsKeyword(title, itemType.keywords, itemType.excludedKeywords)
-                    )
-                );
-
-                // Special overlap rule: if the title also looks like Children's Furniture,
-                // do not let Living Room furniture steal it due shared words like "দোলনা"/"swing".
-                if (isLivingRoomFurnitureCategory && titleLooksLikeChildrenFurniture) {
-                    console.log('[Auto-Select] Living Room match skipped because title also matches Children\'s Furniture (251).');
-                    continue;
-                }
+            if (categoryEntry.categoryValue === categoryEntryToProcess.categoryValue) {
 
                 const currentUrl = window.location.href;
                 // These pages were previously excluded, removing that specific logic as the new membership check is more targeted.
@@ -3445,7 +3472,7 @@ function autoClickContinueForDeactivatedAd() {
 
                 const isLaptopAccessoryCategory = (categoryEntry.categoryValue === "897");
 
-                if (titleContainsStrongLaptopKeyword && isLaptopAccessoryCategory) {
+                if (titleContainsStrongLaptopKeyword && isLaptopAccessoryCategory && !shouldPinCurrentAccessoryCategory) {
                     console.log(`[Auto-Select] Conflict detected: Title contains strong "laptop" keywords but matched "${categoryEntry.name}". Skipping this accessory match to prioritize Laptop.`);
                     continue;
                 }
